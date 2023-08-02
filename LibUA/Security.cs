@@ -6,6 +6,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using LibUA.Core;
 
+
 namespace LibUA
 {
 	public static class UASecurity
@@ -137,7 +138,7 @@ namespace LibUA
 
 		public static int CalculatePublicKeyLength(X509Certificate2 cert)
 		{
-			RSA rsa = cert.PublicKey.Key as RSA;
+			var rsa = cert.GetRSAPublicKey();
 			if (rsa == null)
 			{
 				throw new Exception("Could not create RSA");
@@ -214,12 +215,12 @@ namespace LibUA
 
 		public static int CalculateSignatureSize(X509Certificate2 cert)
 		{
-			return CalculateSignatureSize(cert.PublicKey.Key as RSA);
+			return CalculateSignatureSize(cert.GetRSAPublicKey());
 		}
 
 		public static int CalculateEncryptedSize(X509Certificate2 cert, int messageSize, PaddingAlgorithm paddingAlgorithm)
 		{
-			RSA rsa = cert.PublicKey.Key as RSA;
+			var rsa = cert.GetRSAPublicKey();
 			if (rsa == null)
 			{
 				throw new Exception("Could not create RSA");
@@ -272,25 +273,20 @@ namespace LibUA
 		{
 			//var arr = Enumerable.Range(1, numBytes).Select(i => (byte)(i & 0xFF)).ToArray();
 			//return arr;
-
-			RandomNumberGenerator rng = new RNGCryptoServiceProvider();
-
 			var res = new byte[numBytes];
-			rng.GetBytes(res);
-
+			RandomNumberGenerator.Fill(res);
 			return res;
 		}
 
 		public static byte[] AesEncrypt(ArraySegment<byte> data, byte[] key, byte[] iv)
 		{
-			using (var aes = new AesManaged()
+			using (var aes = Aes.Create())
 			{
-				Mode = CipherMode.CBC,
-				IV = iv, // new byte[16] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-				Key = key,
-				Padding = PaddingMode.PKCS7
-			})
-			{
+				aes.Mode = CipherMode.CBC;
+				aes.IV = iv; // new byte[16] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+				aes.Key = key;
+				aes.Padding = PaddingMode.PKCS7;
+
 				using (var crypt = aes.CreateEncryptor(aes.Key, aes.IV))
 				{
 					using (var ms = new MemoryStream())
@@ -322,14 +318,13 @@ namespace LibUA
 				return null;
 			}
 
-			using (var aes = new AesManaged()
+			using (var aes = Aes.Create())
 			{
-				Mode = CipherMode.CBC,
-				IV = iv, // new byte[16] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-				Key = key,
-				Padding = PaddingMode.PKCS7
-			})
-			{
+				aes.Mode = CipherMode.CBC;
+				aes.IV = iv; // new byte[16] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+				aes.Key = key;
+				aes.Padding = PaddingMode.PKCS7;
+
 				using (var crypt = aes.CreateDecryptor(aes.Key, aes.IV))
 				{
 					using (var ms = new MemoryStream(data.Array, data.Offset, data.Count))
@@ -362,6 +357,51 @@ namespace LibUA
 			}
 		}
 
+		public static int AesEncryptInplace(ArraySegment<byte> data, byte[] key, byte[] iv)
+		{
+			using (var aes = Aes.Create())
+			{
+				aes.Mode = CipherMode.CBC;
+				aes.IV = iv;
+				aes.Key = key;
+				aes.Padding = PaddingMode.None;
+
+				using (var crypt = aes.CreateEncryptor(aes.Key, aes.IV))
+				{
+					if (data.Count % crypt.InputBlockSize != 0)
+					{
+						throw new Exception(string.Format("Input data is not a multiple of block size, {0}/{1}", data.Count, crypt.InputBlockSize));
+					}
+
+					crypt.TransformBlock(data.Array, data.Offset, data.Count, data.Array, data.Offset);
+					return ((data.Count + crypt.InputBlockSize - 1) / crypt.InputBlockSize) * crypt.InputBlockSize;
+				}
+			}
+		}
+		public static int AesDecryptInplace(ArraySegment<byte> data, byte[] key, byte[] iv)
+		{
+			using (var aes = Aes.Create())
+			{
+				aes.Mode = CipherMode.CBC;
+				aes.IV = iv;
+				aes.Key = key;
+				aes.Padding = PaddingMode.None;
+
+				using (var crypt = aes.CreateDecryptor(aes.Key, aes.IV))
+				{
+					if (data.Count % crypt.InputBlockSize != 0)
+					{
+						throw new Exception(string.Format("Input data is not a multiple of block size, {0}/{1}", data.Count, crypt.InputBlockSize));
+					}
+
+					crypt.TransformBlock(data.Array, data.Offset, data.Count, data.Array, data.Offset);
+
+					int numBlocks = (data.Count + crypt.InputBlockSize - 1) / crypt.InputBlockSize;
+					return numBlocks * crypt.InputBlockSize;
+				}
+			}
+		}
+/*
 		public static int RijndaelEncryptInplace(ArraySegment<byte> data, byte[] key, byte[] iv)
 		{
 			using (var rijn = new RijndaelManaged()
@@ -410,7 +450,7 @@ namespace LibUA
 				}
 			}
 		}
-
+*/
 		public static string ExportRSAPrivateKey(RSAParameters parameters)
 		{
 			MemoryStream ms = new MemoryStream();
@@ -666,7 +706,7 @@ namespace LibUA
 
 		public static int GetPlainBlockSize(X509Certificate2 cert, RSAEncryptionPadding useOaep)
 		{
-			var rsa = cert.PublicKey.Key as RSA;
+			var rsa = cert.GetRSAPublicKey();
 			if (rsa == null)
 			{
 				throw new Exception("Could not create RSA");
@@ -691,7 +731,7 @@ namespace LibUA
 
 		public static int GetCipherTextBlockSize(X509Certificate2 cert)
 		{
-			var rsa = cert.PublicKey.Key as RSA;
+			var rsa = cert.GetRSAPublicKey();
 			if (rsa == null)
 			{
 				throw new Exception("Could not create RSA");
@@ -702,7 +742,7 @@ namespace LibUA
 
 		public static int GetSignatureLength(X509Certificate2 cert)
 		{
-			var rsa = cert.PublicKey.Key as RSA;
+			var rsa = cert.GetRSAPublicKey();
 			if (rsa == null)
 			{
 				throw new Exception("Could not create RSA");
@@ -753,16 +793,16 @@ namespace LibUA
 				case SecurityPolicy.Basic256Sha256:
 				case SecurityPolicy.Aes128_Sha256_RsaOaep:
 				case SecurityPolicy.Aes256_Sha256_RsaPss:
-					return new SHA256Managed();
+					return SHA256.Create();
 
 				default:
-					return new SHA1Managed();
+					return SHA1.Create();
 			}
 		}
 
 		public static bool VerifySigned(ArraySegment<byte> data, byte[] signature, X509Certificate2 cert, SecurityPolicy policy)
 		{
-			var rsa = cert.PublicKey.Key as RSA;
+			var rsa = cert.GetRSAPublicKey();
 
 			var hash = HashAlgorithmForSecurityPolicy(policy);
 			var digest = hash.ComputeHash(data.Array, data.Offset, data.Count);
@@ -774,7 +814,7 @@ namespace LibUA
 
 		public static byte[] Encrypt(ArraySegment<byte> data, X509Certificate2 cert, RSAEncryptionPadding padding)
 		{
-			var rsa = cert.PublicKey.Key as RSA;
+			var rsa = cert.GetRSAPublicKey();
 			int inputBlockSize = GetPlainBlockSize(cert, padding);
 
 			if (data.Count % inputBlockSize != 0)
@@ -965,7 +1005,7 @@ namespace LibUA
 			{
 				try
 				{
-					decrSize = UASecurity.RijndaelDecryptInplace(
+					decrSize = UASecurity.AesDecryptInplace(
 						new ArraySegment<byte>(recvBuf.Buffer, messageEncodedBlockStart, (int)messageSize - messageEncodedBlockStart),
 						remoteKeysets[keysetIdx].SymEncKey, remoteKeysets[keysetIdx].SymIV) + messageEncodedBlockStart;
 
@@ -1072,7 +1112,7 @@ namespace LibUA
 
 			if (securityMode >= MessageSecurityMode.SignAndEncrypt)
 			{
-				int encrLen = UASecurity.RijndaelEncryptInplace(
+				int encrLen = UASecurity.AesEncryptInplace(
 					new ArraySegment<byte>(respBuf.Buffer, messageEncodedBlockStart, msgSize - messageEncodedBlockStart),
 					localKeyset.SymEncKey, localKeyset.SymIV);
 			}
